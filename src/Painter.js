@@ -20,6 +20,7 @@ import Image from './graphic/Image';
 //
 // Maximum progressive layer. When exceeding this number. All elements will be drawed in the last layer.
 var MAX_PROGRESSIVE_LAYER_NUMBER = 5;
+var MAX_STREAM_LAYER_NUMBER = 5;
 
 function parseInt10(val) {
     return parseInt(val, 10);
@@ -213,6 +214,8 @@ var Painter = function (root, storage, opts) {
     // Layers for progressive rendering
     this._progressiveLayers = [];
 
+    this._streamLayers = [];
+
     /**
      * @type {module:zrender/Layer}
      * @private
@@ -264,7 +267,7 @@ Painter.prototype = {
 
         var zlevelList = this._zlevelList;
 
-        this._paintList(list, paintAll);
+        var streamUnfinished = this._paintList(list, paintAll);
 
         // Paint custum layers
         for (var i = 0; i < zlevelList.length; i++) {
@@ -281,7 +284,7 @@ Painter.prototype = {
             this._startProgessive();
         }
 
-        return this;
+        return streamUnfinished;
     },
 
     addHover: function (el, hoverStyle) {
@@ -403,6 +406,12 @@ Painter.prototype = {
         });
     },
 
+    _clearStream: function () {
+        util.each(this._streamLayers, function (layer) {
+            layer.__dirty && layer.clear();
+        });
+    },
+
     _paintList: function (list, paintAll) {
 
         if (paintAll == null) {
@@ -413,11 +422,15 @@ Painter.prototype = {
 
         this._clearProgressive();
 
+        this._clearStream();
+
         this.eachBuiltinLayer(preProcessLayer);
 
-        this._doPaintList(list, paintAll);
+        var streamUnfinished = this._doPaintList(list, paintAll);
 
         this.eachBuiltinLayer(postProcessLayer);
+
+        return streamUnfinished;
     },
 
     _doPaintList: function (list, paintAll) {
@@ -435,6 +448,8 @@ Painter.prototype = {
         var height = this._height;
         var layerProgress;
         var frame = this._progress;
+        var streamUnfinished;
+
         function flushProgressiveLayer(layer) {
             var dpr = ctx.dpr || 1;
             ctx.save();
@@ -452,6 +467,7 @@ Painter.prototype = {
             var elZLevel = this._singleCanvas ? 0 : el.zlevel;
 
             var elFrame = el.__frame;
+            var framesRoot = el.framesRoot;
 
             // Flush at current context
             // PENDING
@@ -495,6 +511,7 @@ Painter.prototype = {
                 continue;
             }
 
+            // ??? conflicat with framesRoot?
             if (elFrame >= 0) {
                 // Progressive layer changed
                 if (!currentProgressiveLayer) {
@@ -530,6 +547,24 @@ Painter.prototype = {
                     this._doPaintEl(el, currentProgressiveLayer, true, currentProgressiveLayer.renderScope);
                 }
             }
+            else if (framesRoot) {
+                var streamLayer = this._streamLayers[el.__streamLayerIndex];
+                var roots = framesRoot.progress();
+                if (roots) {
+                    // ??? otherwise `_doPaintEl` will not paint it.
+                    streamLayer.__dirty = true;
+                    var streamDisplayList = this.storage.getStreamDisplayList(roots);
+                    // ???
+                    // console.log('_doPaintList: streamDisplayList.length: ', streamDisplayList.length);
+                    for (var j = 0; j < streamDisplayList.length; j++) {
+                        var streamEl = streamDisplayList[j];
+                        this._doPaintEl(streamEl, streamLayer, paintAll, {});
+                    }
+                    streamLayer.__dirty = false;
+                }
+                streamUnfinished |= framesRoot.unfinished();
+                flushProgressiveLayer(streamLayer);
+            }
             else {
                 this._doPaintEl(el, currentLayer, paintAll, scope);
             }
@@ -554,6 +589,8 @@ Painter.prototype = {
                 this._furtherProgressive = true;
             }
         }, this);
+
+        return streamUnfinished;
     },
 
     _doPaintEl: function (el, currentLayer, forcePaint, scope) {
@@ -748,6 +785,7 @@ Painter.prototype = {
 
         var layers = this._layers;
         var progressiveLayers = this._progressiveLayers;
+        var streamLayers = this._streamLayers;
 
         var elCountsLastFrame = {};
         var progressiveElCountsLastFrame = {};
@@ -764,10 +802,17 @@ Painter.prototype = {
             layer.__dirty = false;
         });
 
+        util.each(streamLayers, function (layer, idx) {
+            layer.__dirty = false;
+        });
+
         var progressiveLayerCount = 0;
         var currentProgressiveLayer;
+        var currentStreamLayerIndex = 0;
+        var currentStreamLayer;
         var lastProgressiveKey;
         var frameCount = 0;
+
         for (var i = 0, l = list.length; i < l; i++) {
             var el = list[i];
             var zlevel = this._singleCanvas ? 0 : el.zlevel;
@@ -818,6 +863,36 @@ Painter.prototype = {
                     currentProgressiveLayer = null;
                 }
             }
+
+            var framesRoot = el.framesRoot;
+            if (framesRoot) {
+                if (!currentStreamLayer) {
+                    currentStreamLayer = streamLayers[currentStreamLayerIndex];
+                    if (!currentStreamLayer) {
+                        currentStreamLayer = streamLayers[currentStreamLayerIndex]
+                            = new Layer('stream', this, this.dpr);
+                        currentStreamLayer.initContext();
+                    }
+                }
+                // If z order have been changed.
+                if (currentStreamLayerIndex !== el.__streamLayerIndex || framesRoot.__dirty) {
+                    el.__streamLayerIndex = currentStreamLayerIndex;
+                    // Mark as it should be cleared, and render from the begining.
+                    currentStreamLayer.__dirty = true;
+                    currentStreamLayer.__dueFrameIndex = 0;
+                }
+                if (layer && framesRoot.unfinished()) {
+                    // Otherwise render will not be performed in `_doPaintList`.
+                    layer.__dirty = true;
+                }
+            }
+            else {
+                // Encounter an non-streamRoot el, we have to use a new layer for next streamRoot.
+                if (currentStreamLayer) {
+                    currentStreamLayerIndex = Math.min(currentStreamLayerIndex + 1, MAX_STREAM_LAYER_NUMBER);
+                    currentStreamLayer = null;
+                }
+            }
         }
 
         if (currentProgressiveLayer) {
@@ -835,6 +910,7 @@ Painter.prototype = {
         progressiveLayers.length = Math.min(progressiveLayerCount, MAX_PROGRESSIVE_LAYER_NUMBER);
         util.each(progressiveLayers, function (layer, idx) {
             if (progressiveElCountsLastFrame[idx] !== layer.elCount) {
+                // ??? layer.__dirty = true?
                 el.__dirty = true;
             }
             if (layer.__dirty) {
@@ -1066,9 +1142,9 @@ Painter.prototype = {
         var ctx = canvas.getContext('2d');
         var rect = path.getBoundingRect();
         var style = path.style;
-        var shadowBlurSize = style.shadowBlur * ctx.dpr;
-        var shadowOffsetX = style.shadowOffsetX * ctx.dpr;
-        var shadowOffsetY = style.shadowOffsetY * ctx.dpr;
+        var shadowBlurSize = style.shadowBlur;
+        var shadowOffsetX = style.shadowOffsetX;
+        var shadowOffsetY = style.shadowOffsetY;
         var lineWidth = style.hasStroke() ? style.lineWidth : 0;
 
         var leftMargin = Math.max(lineWidth / 2, -shadowOffsetX + shadowBlurSize);

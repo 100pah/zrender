@@ -29,6 +29,7 @@ function shapeCompareFunc(a, b) {
     }
     return a.zlevel - b.zlevel;
 }
+
 /**
  * 内容仓库 (M)
  * @alias module:zrender/Storage
@@ -37,9 +38,7 @@ function shapeCompareFunc(a, b) {
 var Storage = function () { // jshint ignore:line
     this._roots = [];
 
-    this._displayList = [];
-
-    this._displayListLen = 0;
+    this._initDisplayList();
 };
 
 Storage.prototype = {
@@ -79,11 +78,12 @@ Storage.prototype = {
      * @param {boolean} [includeIgnore=false] 是否包含 ignore 的数组
      */
     updateDisplayList: function (includeIgnore) {
-        this._displayListLen = 0;
+        this._resetDisplayList();
+
         var roots = this._roots;
         var displayList = this._displayList;
         for (var i = 0, len = roots.length; i < len; i++) {
-            this._updateAndAddDisplayable(roots[i], null, includeIgnore);
+            updateAndAddDisplayable(this, roots[i], null, includeIgnore);
         }
         displayList.length = this._displayListLen;
 
@@ -95,72 +95,41 @@ Storage.prototype = {
         env.canvasSupported && timsort(displayList, shapeCompareFunc);
     },
 
-    _updateAndAddDisplayable: function (el, clipPaths, includeIgnore) {
-
-        if (el.ignore && !includeIgnore) {
-            return;
+    // ??? Save
+    getStreamDisplayList: function (roots) {
+        // ??? _xxx
+        // ??? reuse array?
+        var listWrap = {
+            _displayList: [],
+            _displayListLen: 0
+        };
+        for (var i = 0, len = roots.length; i < len; i++) {
+            updateAndAddDisplayable(listWrap, roots[i]);
         }
+        // displayList.length = listHost._displayListLen;
 
-        el.beforeUpdate();
+        env.canvasSupported && timsort(listWrap._displayList, shapeCompareFunc);
 
-        if (el.__dirty) {
+        return listWrap._displayList;
+    },
 
-            el.update();
+    _initDisplayList: function () {
+        this._displayList = [];
+        this._displayListLen = 0;
 
-        }
+        this._displayList.framesRoots = [];
+        this._displayList.framesRootsLen = 0;
+    },
 
-        el.afterUpdate();
+    _resetDisplayList: function () {
+        this._displayListLen = 0;
 
-        var userSetClipPath = el.clipPath;
-        if (userSetClipPath) {
-
-            // FIXME 效率影响
-            if (clipPaths) {
-                clipPaths = clipPaths.slice();
-            }
-            else {
-                clipPaths = [];
-            }
-
-            var currentClipPath = userSetClipPath;
-            var parentClipPath = el;
-            // Recursively add clip path
-            while (currentClipPath) {
-                // clipPath 的变换是基于使用这个 clipPath 的元素
-                currentClipPath.parent = parentClipPath;
-                currentClipPath.updateTransform();
-
-                clipPaths.push(currentClipPath);
-
-                parentClipPath = currentClipPath;
-                currentClipPath = currentClipPath.clipPath;
-            }
-        }
-
-        if (el.isGroup) {
-            var children = el._children;
-
-            for (var i = 0; i < children.length; i++) {
-                var child = children[i];
-
-                // Force to mark as dirty if group is dirty
-                // FIXME __dirtyPath ?
-                if (el.__dirty) {
-                    child.__dirty = true;
-                }
-
-                this._updateAndAddDisplayable(child, clipPaths, includeIgnore);
-            }
-
-            // Mark group clean here
-            el.__dirty = false;
-
-        }
-        else {
-            el.__clipPaths = clipPaths;
-
-            this._displayList[this._displayListLen++] = el;
-        }
+        // var displayList = this._displayList;
+        // displayList.framesRootsLen = 0;
+        // var framesRoots = displayList.framesRoots;
+        // for (var i = 0; i < framesRoots.length; i++) {
+        //     framesRoots[i]._displayListLen = 0;
+        // }
     },
 
     /**
@@ -195,8 +164,8 @@ Storage.prototype = {
             }
 
             this._roots = [];
-            this._displayList = [];
-            this._displayListLen = 0;
+
+            this._initDisplayList();
 
             return;
         }
@@ -244,5 +213,95 @@ Storage.prototype = {
 
     displayableSortFunc: shapeCompareFunc
 };
+
+
+function updateAndAddDisplayable(listHost, el, clipPaths, includeIgnore) {
+    var displayList = listHost._displayList;
+
+    if (el.ignore && !includeIgnore) {
+        return;
+    }
+
+    el.beforeUpdate();
+
+    if (el.__dirty) {
+
+        el.update();
+
+    }
+
+    el.afterUpdate();
+
+    var userSetClipPath = el.clipPath;
+    if (userSetClipPath) {
+
+        // FIXME 效率影响
+        if (clipPaths) {
+            clipPaths = clipPaths.slice();
+        }
+        else {
+            clipPaths = [];
+        }
+
+        var currentClipPath = userSetClipPath;
+        var parentClipPath = el;
+        // Recursively add clip path
+        while (currentClipPath) {
+            // clipPath 的变换是基于使用这个 clipPath 的元素
+            currentClipPath.parent = parentClipPath;
+            currentClipPath.updateTransform();
+
+            clipPaths.push(currentClipPath);
+
+            parentClipPath = currentClipPath;
+            currentClipPath = currentClipPath.clipPath;
+        }
+    }
+
+    if (el.isGroup) {
+        var children = el._children;
+
+        for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+
+            // Force to mark as dirty if group is dirty
+            // FIXME __dirtyPath ?
+            if (el.__dirty) {
+                child.__dirty = true;
+            }
+
+            updateAndAddDisplayable(listHost, child, clipPaths, includeIgnore);
+        }
+
+        // Mark group clean here
+        el.__dirty = false;
+
+        var framesRoots = displayList.framesRoots;
+        var framesAgent = el.framesAgent;
+        // If is top list.
+        if (framesAgent && framesRoots) {
+            displayList[listHost._displayListLen++] = framesAgent;
+
+            // var framesRootsLen = displayList.framesRootsLen;
+            // var wrap = framesRoots[framesRootsLen] || (framesRoots[framesRootsLen] = {
+            //     _displayList: [],
+            //     _displayListLen: 0
+            // });
+            // wrap.el = el;
+            // displayList.framesRootsLen++;
+
+            // framesRootLengths.push(0);
+            // For sorting
+            framesAgent.z = el.z;
+            framesAgent.z2 = el.z2;
+        }
+
+    }
+    else {
+        el.__clipPaths = clipPaths;
+
+        displayList[listHost._displayListLen++] = el;
+    }
+}
 
 export default Storage;

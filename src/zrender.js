@@ -213,15 +213,20 @@ ZRender.prototype = {
      * Repaint the canvas immediately
      */
     refreshImmediately: function () {
+        // ???
+        console.log('~~~~~~~~~~~~~~~ zr refreshImmediately ~~~~~~~~~~~~~~~~~');
         // var start = new Date();
         // Clear needsRefresh ahead to avoid something wrong happens in refresh
         // Or it will cause zrender refreshes again and again.
         this._needsRefresh = false;
-        this.painter.refresh();
+        // ???
+        var streamUnfinished = this.painter.refresh();
+        // ???
+        console.log('streamUnfinished:', streamUnfinished);
         /**
          * Avoid trigger zr.refresh in Element#beforeUpdate hook
          */
-        this._needsRefresh = false;
+        this._needsRefresh = !!streamUnfinished;
         // var end = new Date();
 
         // var log = document.getElementById('log');

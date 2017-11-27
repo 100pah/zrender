@@ -19,6 +19,7 @@
 
 import * as zrUtil from '../core/util';
 import Element from '../Element';
+import Path from '../graphic/Path';
 import BoundingRect from '../core/BoundingRect';
 
 /**
@@ -44,6 +45,10 @@ var Group = function (opts) {
     this.__storage = null;
 
     this.__dirty = true;
+
+    this._frameCount = 0;
+
+    this._dueFrameIndex = 0;
 };
 
 Group.prototype = {
@@ -69,7 +74,15 @@ Group.prototype = {
      * @return {Array.<module:zrender/Element>}
      */
     children: function () {
-        return this._children.slice();
+        // ??? Other children related methods, modify?
+        return this._getChildren().slice();
+    },
+
+    _getChildren: function () {
+        var frameCount = this._frameCount;
+        return frameCount > 0
+            ? this._frameChildrenList[frameCount - 1]
+            : this._children;
     },
 
     /**
@@ -78,7 +91,7 @@ Group.prototype = {
      * @return {module:zrender/Element}
      */
     childAt: function (idx) {
-        return this._children[idx];
+        return this._getChildren()[idx];
     },
 
     /**
@@ -87,7 +100,7 @@ Group.prototype = {
      * @return {module:zrender/Element}
      */
     childOfName: function (name) {
-        var children = this._children;
+        var children = this._getChildren();
         for (var i = 0; i < children.length; i++) {
             if (children[i].name === name) {
                 return children[i];
@@ -99,7 +112,7 @@ Group.prototype = {
      * @return {number}
      */
     childCount: function () {
-        return this._children.length;
+        return this._getChildren().length;
     },
 
     /**
@@ -109,7 +122,7 @@ Group.prototype = {
     add: function (child) {
         if (child && child !== this && child.parent !== this) {
 
-            this._children.push(child);
+            this._getChildren().push(child);
 
             this._doAdd(child);
         }
@@ -126,7 +139,7 @@ Group.prototype = {
         if (child && child !== this && child.parent !== this
             && nextSibling && nextSibling.parent === this) {
 
-            var children = this._children;
+            var children = this._getChildren();
             var idx = children.indexOf(nextSibling);
 
             if (idx >= 0) {
@@ -166,7 +179,7 @@ Group.prototype = {
     remove: function (child) {
         var zr = this.__zr;
         var storage = this.__storage;
-        var children = this._children;
+        var children = this._getChildren();
 
         var idx = zrUtil.indexOf(children, child);
         if (idx < 0) {
@@ -209,6 +222,9 @@ Group.prototype = {
             child.parent = null;
         }
         children.length = 0;
+        // ???
+        // have not remove from storage yet.
+        this.clearFrames();
 
         return this;
     },
@@ -219,7 +235,7 @@ Group.prototype = {
      * @param  {}   context
      */
     eachChild: function (cb, context) {
-        var children = this._children;
+        var children = this._getChildren();
         for (var i = 0; i < children.length; i++) {
             var child = children[i];
             cb.call(context, child, i);
@@ -233,8 +249,10 @@ Group.prototype = {
      * @param  {}   context
      */
     traverse: function (cb, context) {
-        for (var i = 0; i < this._children.length; i++) {
-            var child = this._children[i];
+        var children = this._getChildren();
+
+        for (var i = 0; i < children.length; i++) {
+            var child = children[i];
             cb.call(context, child);
 
             if (child.type === 'group') {
@@ -266,6 +284,7 @@ Group.prototype = {
 
     dirty: function () {
         this.__dirty = true;
+        this._dueFrameIndex = 0;
         this.__zr && this.__zr.refresh();
         return this;
     },
@@ -307,7 +326,44 @@ Group.prototype = {
             }
         }
         return rect || tmpRect;
+    },
+
+    newFrame: function (dontClearList) {
+        var frameChildrenList = this._frameChildrenList || (this._frameChildrenList = []);
+        var framesAgent = this.framesAgent || (this.framesAgent = new Path());
+        framesAgent.framesRoot = this;
+        var frameCount = this._frameCount++;
+        var list = frameChildrenList[frameCount] = frameChildrenList[frameCount] || [];
+        // FIXME optimize ???
+        // ??? dontClearList is not good.
+        if (!dontClearList) {
+            list.length = 0;
+        }
+        // wrap.len = 0;
+        // wrap.list.length = 0;
+    },
+
+    clearFrames: function () {
+        this._frameCount = 0;
+        // Used to check whether this is a frameAgent.
+        this.framesAgent = null;
+        this.dirty();
+    },
+
+    // ???
+    progress: function () {
+        if (this._dueFrameIndex < this._frameCount) {
+            return this._frameChildrenList[this._dueFrameIndex++].slice();
+        }
+    },
+
+    /**
+     * @return {number} Will not be null/undefined. -1: streame not enabled.
+     */
+    unfinished: function () {
+        return this._dueFrameIndex < this._frameCount;
     }
+
 };
 
 zrUtil.inherits(Group, Element);
