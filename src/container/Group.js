@@ -21,6 +21,7 @@ import * as zrUtil from '../core/util';
 import Element from '../Element';
 import Path from '../graphic/Path';
 import BoundingRect from '../core/BoundingRect';
+import {createTask} from '../core/task';
 
 /**
  * @alias module:zrender/graphic/Group
@@ -45,10 +46,6 @@ var Group = function (opts) {
     this.__storage = null;
 
     this.__dirty = true;
-
-    this._frameCount = 0;
-
-    this._dueFrameIndex = 0;
 };
 
 Group.prototype = {
@@ -56,6 +53,19 @@ Group.prototype = {
     constructor: Group,
 
     isGroup: true,
+
+    /**
+     * Also can be used to check steam enabled.
+     * @readOnly
+     * @type {Object}
+     */
+    renderTask: null,
+
+    /**
+     * @readOnly
+     * @type {Object}
+     */
+    streamAgent: null,
 
     /**
      * @type {string}
@@ -75,14 +85,7 @@ Group.prototype = {
      */
     children: function () {
         // ??? Other children related methods, modify?
-        return this._getChildren().slice();
-    },
-
-    _getChildren: function () {
-        var frameCount = this._frameCount;
-        return frameCount > 0
-            ? this._frameChildrenList[frameCount - 1]
-            : this._children;
+        return this._children;
     },
 
     /**
@@ -91,7 +94,7 @@ Group.prototype = {
      * @return {module:zrender/Element}
      */
     childAt: function (idx) {
-        return this._getChildren()[idx];
+        return this._children[idx];
     },
 
     /**
@@ -100,7 +103,7 @@ Group.prototype = {
      * @return {module:zrender/Element}
      */
     childOfName: function (name) {
-        var children = this._getChildren();
+        var children = this._children;
         for (var i = 0; i < children.length; i++) {
             if (children[i].name === name) {
                 return children[i];
@@ -112,7 +115,10 @@ Group.prototype = {
      * @return {number}
      */
     childCount: function () {
-        return this._getChildren().length;
+        return (this.renderTask
+            ? this._streamChildren
+            : this._children
+        ).length;
     },
 
     /**
@@ -122,7 +128,12 @@ Group.prototype = {
     add: function (child) {
         if (child && child !== this && child.parent !== this) {
 
-            this._getChildren().push(child);
+            if (this.renderTask) {
+                this._streamChildren.push(child);
+            }
+            else {
+                this._children.push(child);
+            }
 
             this._doAdd(child);
         }
@@ -139,7 +150,7 @@ Group.prototype = {
         if (child && child !== this && child.parent !== this
             && nextSibling && nextSibling.parent === this) {
 
-            var children = this._getChildren();
+            var children = this._children;
             var idx = children.indexOf(nextSibling);
 
             if (idx >= 0) {
@@ -179,7 +190,7 @@ Group.prototype = {
     remove: function (child) {
         var zr = this.__zr;
         var storage = this.__storage;
-        var children = this._getChildren();
+        var children = this._children;
 
         var idx = zrUtil.indexOf(children, child);
         if (idx < 0) {
@@ -222,9 +233,14 @@ Group.prototype = {
             child.parent = null;
         }
         children.length = 0;
+
         // ???
-        // have not remove from storage yet.
-        this.clearFrames();
+        // have not remove streamChildren from storage yet.
+        // performance?
+        if (this.renderTask) {
+            this.renderTask.reset();
+            this._streamChildren.length = 0;
+        }
 
         return this;
     },
@@ -235,7 +251,7 @@ Group.prototype = {
      * @param  {}   context
      */
     eachChild: function (cb, context) {
-        var children = this._getChildren();
+        var children = this._children;
         for (var i = 0; i < children.length; i++) {
             var child = children[i];
             cb.call(context, child, i);
@@ -249,7 +265,7 @@ Group.prototype = {
      * @param  {}   context
      */
     traverse: function (cb, context) {
-        var children = this._getChildren();
+        var children = this._children;
 
         for (var i = 0; i < children.length; i++) {
             var child = children[i];
@@ -282,9 +298,8 @@ Group.prototype = {
         }
     },
 
-    dirty: function () {
+    dirty: function (a) {
         this.__dirty = true;
-        this._dueFrameIndex = 0;
         this.__zr && this.__zr.refresh();
         return this;
     },
@@ -328,43 +343,60 @@ Group.prototype = {
         return rect || tmpRect;
     },
 
-    newFrame: function (dontClearList) {
-        var frameChildrenList = this._frameChildrenList || (this._frameChildrenList = []);
-        var framesAgent = this.framesAgent || (this.framesAgent = new Path());
-        framesAgent.framesRoot = this;
-        var frameCount = this._frameCount++;
-        var list = frameChildrenList[frameCount] = frameChildrenList[frameCount] || [];
-        // FIXME optimize ???
-        // ??? dontClearList is not good.
-        if (!dontClearList) {
-            list.length = 0;
-        }
-        // wrap.len = 0;
-        // wrap.list.length = 0;
-    },
-
-    clearFrames: function () {
-        this._frameCount = 0;
-        // Used to check whether this is a frameAgent.
-        this.framesAgent = null;
-        this.dirty();
-    },
-
-    // ???
-    progress: function () {
-        if (this._dueFrameIndex < this._frameCount) {
-            return this._frameChildrenList[this._dueFrameIndex++].slice();
-        }
-    },
-
     /**
-     * @return {number} Will not be null/undefined. -1: streame not enabled.
+     * If called duplicately, nothing will happen.
      */
-    unfinished: function () {
-        return this._dueFrameIndex < this._frameCount;
-    }
+    enableStream: function (disable) {
+        var renderTask = this.renderTask;
 
+        if (disable) {
+            renderTask && renderTask.remove();
+            this.streamAgent = this.renderTask = null;
+            return;
+        }
+
+        if (!renderTask) {
+            this.renderTask = createTask({
+                list: this,
+                reset: zrUtil.bind(renderTaskReset, this),
+                progress: zrUtil.bind(renderTaskProgress, this)
+            });
+            this.renderTask.outRoots = [];
+        }
+        if (!this.streamAgent) {
+            this.streamAgent = new Path();
+            this.streamAgent.streamContainer = this;
+        }
+        if (!this._streamChildren) {
+            this._streamChildren = [];
+        }
+    },
+
+    count: function () {
+        return this.renderTask
+            ? this._streamChildren.length
+            : this._children.length;
+    }
 };
+
+function renderTaskReset() {
+    // Indicate that the stream layer should be cleared.
+    this.dirty();
+    this.streamAgent.dirty();
+}
+
+function renderTaskProgress(params, notify) {
+    var dueDataIndex = params.dueDataIndex;
+    var count = params.dueEnd - dueDataIndex;
+    var outRoots = this.renderTask.outRoots;
+    var i = 0;
+    for (; i < count; i++) {
+        outRoots[i] = this._streamChildren[i + dueDataIndex];
+    }
+    outRoots.length = i;
+
+    notify(i + dueDataIndex);
+}
 
 zrUtil.inherits(Group, Element);
 

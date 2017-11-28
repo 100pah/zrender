@@ -78,7 +78,7 @@ Storage.prototype = {
      * @param {boolean} [includeIgnore=false] 是否包含 ignore 的数组
      */
     updateDisplayList: function (includeIgnore) {
-        this._resetDisplayList();
+        this._displayListLen = 0;
 
         var roots = this._roots;
         var displayList = this._displayList;
@@ -116,20 +116,6 @@ Storage.prototype = {
     _initDisplayList: function () {
         this._displayList = [];
         this._displayListLen = 0;
-
-        this._displayList.framesRoots = [];
-        this._displayList.framesRootsLen = 0;
-    },
-
-    _resetDisplayList: function () {
-        this._displayListLen = 0;
-
-        // var displayList = this._displayList;
-        // displayList.framesRootsLen = 0;
-        // var framesRoots = displayList.framesRoots;
-        // for (var i = 0; i < framesRoots.length; i++) {
-        //     framesRoots[i]._displayListLen = 0;
-        // }
     },
 
     /**
@@ -276,11 +262,10 @@ function updateAndAddDisplayable(listHost, el, clipPaths, includeIgnore) {
         // Mark group clean here
         el.__dirty = false;
 
-        var framesRoots = displayList.framesRoots;
-        var framesAgent = el.framesAgent;
-        // If is top list.
-        if (framesAgent && framesRoots) {
-            displayList[listHost._displayListLen++] = framesAgent;
+        var renderTask = el.renderTask;
+        if (renderTask) {
+            var streamAgent = el.streamAgent;
+            displayList[listHost._displayListLen++] = streamAgent;
 
             // var framesRootsLen = displayList.framesRootsLen;
             // var wrap = framesRoots[framesRootsLen] || (framesRoots[framesRootsLen] = {
@@ -292,8 +277,8 @@ function updateAndAddDisplayable(listHost, el, clipPaths, includeIgnore) {
 
             // framesRootLengths.push(0);
             // For sorting
-            framesAgent.z = el.z;
-            framesAgent.z2 = el.z2;
+            streamAgent.z = el.z;
+            streamAgent.z2 = el.z2;
         }
 
     }

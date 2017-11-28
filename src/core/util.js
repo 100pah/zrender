@@ -557,6 +557,36 @@ export function assert(condition, message) {
     }
 }
 
+/**
+ * Enable property storage to any host object.
+ * Notice: Serialization is not supported.
+ *
+ * For example:
+ * var inner = zrUitl.makeInner();
+ *
+ * function some1(hostObj) {
+ *      inner(hostObj).someProperty = 1212;
+ *      ...
+ * }
+ * function some2() {
+ *      var fields = inner(this);
+ *      fields.someProperty1 = 1212;
+ *      fields.someProperty2 = 'xx';
+ *      ...
+ * }
+ *
+ * @return {Function}
+ */
+export var makeInner = (function () {
+    var index = 0;
+    return function () {
+        var key = '__\0zr_inner_' + index++;
+        return function (hostObj) {
+            return hostObj[key] || (hostObj[key] = {});
+        };
+    };
+})();
+
 var primitiveKey = '__ec_primitive__';
 /**
  * Set an object as primitive to be ignored traversing children in clone or merge

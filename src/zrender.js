@@ -222,7 +222,6 @@ ZRender.prototype = {
         // ???
         var streamUnfinished = this.painter.refresh();
         // ???
-        console.log('streamUnfinished:', streamUnfinished);
         /**
          * Avoid trigger zr.refresh in Element#beforeUpdate hook
          */

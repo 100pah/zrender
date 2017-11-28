@@ -467,7 +467,7 @@ Painter.prototype = {
             var elZLevel = this._singleCanvas ? 0 : el.zlevel;
 
             var elFrame = el.__frame;
-            var framesRoot = el.framesRoot;
+            var streamContainer = el.streamContainer;
 
             // Flush at current context
             // PENDING
@@ -547,22 +547,21 @@ Painter.prototype = {
                     this._doPaintEl(el, currentProgressiveLayer, true, currentProgressiveLayer.renderScope);
                 }
             }
-            else if (framesRoot) {
+            else if (streamContainer) {
                 var streamLayer = this._streamLayers[el.__streamLayerIndex];
-                var roots = framesRoot.progress();
-                if (roots) {
-                    // ??? otherwise `_doPaintEl` will not paint it.
-                    streamLayer.__dirty = true;
-                    var streamDisplayList = this.storage.getStreamDisplayList(roots);
-                    // ???
-                    // console.log('_doPaintList: streamDisplayList.length: ', streamDisplayList.length);
-                    for (var j = 0; j < streamDisplayList.length; j++) {
-                        var streamEl = streamDisplayList[j];
-                        this._doPaintEl(streamEl, streamLayer, paintAll, {});
-                    }
-                    streamLayer.__dirty = false;
+                var renderTask = streamContainer.renderTask;
+                renderTask.progress();
+                // ??? otherwise `_doPaintEl` will not paint it.
+                streamLayer.__dirty = true;
+                var streamDisplayList = this.storage.getStreamDisplayList(renderTask.outRoots);
+                // ???
+                // console.log('_doPaintList: streamDisplayList.length: ', streamDisplayList.length);
+                for (var j = 0; j < streamDisplayList.length; j++) {
+                    var streamEl = streamDisplayList[j];
+                    this._doPaintEl(streamEl, streamLayer, paintAll, {});
                 }
-                streamUnfinished |= framesRoot.unfinished();
+                streamLayer.__dirty = false;
+                streamUnfinished |= renderTask.unfinished();
                 flushProgressiveLayer(streamLayer);
             }
             else {
@@ -864,8 +863,8 @@ Painter.prototype = {
                 }
             }
 
-            var framesRoot = el.framesRoot;
-            if (framesRoot) {
+            var streamContainer = el.streamContainer;
+            if (streamContainer) {
                 if (!currentStreamLayer) {
                     currentStreamLayer = streamLayers[currentStreamLayerIndex];
                     if (!currentStreamLayer) {
@@ -875,13 +874,12 @@ Painter.prototype = {
                     }
                 }
                 // If z order have been changed.
-                if (currentStreamLayerIndex !== el.__streamLayerIndex || framesRoot.__dirty) {
+                if (currentStreamLayerIndex !== el.__streamLayerIndex || streamContainer.streamAgent.__dirty) {
                     el.__streamLayerIndex = currentStreamLayerIndex;
                     // Mark as it should be cleared, and render from the begining.
                     currentStreamLayer.__dirty = true;
-                    currentStreamLayer.__dueFrameIndex = 0;
                 }
-                if (layer && framesRoot.unfinished()) {
+                if (layer && streamContainer.renderTask.unfinished()) {
                     // Otherwise render will not be performed in `_doPaintList`.
                     layer.__dirty = true;
                 }
