@@ -381,8 +381,7 @@ Group.prototype = {
 
 function renderTaskReset() {
     // Indicate that the stream layer should be cleared.
-    this.dirty();
-    this.streamAgent.dirty();
+    this.streamAgent && this.streamAgent.dirty();
 }
 
 function renderTaskProgress(params, notify) {

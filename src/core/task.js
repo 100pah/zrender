@@ -34,16 +34,15 @@ export function isTask(obj) {
 function Task(define) {
     var fields = inner(this);
 
-    fields.started = false;
     fields.downstreams = [];
     fields.upstreams = [];
-    fields.dueEnd = null;
-    fields.dueIndex = 0;
     fields.list = define.list;
 
     this._progressCustom = define.progress;
     this._resetCustom = define.reset;
     this._progressNotify = bind(progressNotify, this);
+
+    this.reset();
 }
 
 var taskProto = Task.prototype;
@@ -55,11 +54,11 @@ taskProto.reset = function (params) {
     var fields = inner(this);
 
     fields.started = false;
-
-    this._resetCustom && this._resetCustom(params);
-
     fields.dueEnd = fields.upstreams.length ? 0 : null;
     fields.dueIndex = 0;
+    fields.outputDueEnd = 0;
+
+    this._resetCustom && this._resetCustom(params);
 
     each(fields.downstreams, function (downTask) {
         downTask.reset(params);
@@ -87,29 +86,47 @@ taskProto.progress = function (params) {
     }, this._progressNotify);
 };
 
-function progressNotify(dueIndex, downstreamDueEnd) {
+function progressNotify(dueIndex, outputDueEnd) {
     var fields = inner(this);
 
     assert(dueIndex != null);
 
     fields.dueIndex = dueIndex;
 
-    var downstreamPlan = {
-        dueEnd: downstreamDueEnd != null ? downstreamDueEnd : dueIndex
-    };
+    // If no `outputDueEnd`, assume that output data and
+    // input data is the same, so use `dueIndex` as `outputDueEnd`.
+    fields.outputDueEnd = outputDueEnd != null ? outputDueEnd : dueIndex;
 
     each(fields.downstreams, function (downTask) {
-        downTask.plan(downstreamPlan);
+        downTask.plan();
     });
 }
 
 /**
- * @param {Object} params
- * @param {number} params.dueEnd
+ * Receive notify. ??? Only on notify? check pipe.
  */
-taskProto.plan = function (params) {
-    assert(params.dueEnd != null);
-    inner(this).dueEnd = params.dueEnd;
+taskProto.plan = function () {
+    var fields = inner(this);
+
+    var upDueEnd;
+    each(fields.upstreams, function (upTask) {
+        var dueEnd = upTask.getOutputDueEnd();
+        upDueEnd = upDueEnd != null
+            // Current no scenario that upstreams
+            // outputs data are not the same.
+            ? Math.min(upDueEnd, dueEnd)
+            : dueEnd;
+    });
+
+    assert(upDueEnd >= fields.dueEnd);
+    fields.dueEnd = upDueEnd;
+};
+
+/**
+ * @return {number}
+ */
+taskProto.getOutputDueEnd = function () {
+    return inner(this).outputDueEnd;
 };
 
 /**
@@ -130,36 +147,57 @@ taskProto.unfinished = function () {
  */
 taskProto.pipe = function (downTask) {
     var fields = inner(this);
-    assert(!fields.started && downTask.plan);
 
     var downTaskUpstreams = inner(downTask).upstreams;
     if (indexOf(downTaskUpstreams, this) >= 0) {
         return;
     }
 
+    downTask.reset();
+
     fields.downstreams.push(downTask);
     downTaskUpstreams.push(this);
 
-    downTask.reset();
+    downTask.plan();
 
     return downTask;
 };
 
-// ??? whether use remove to remove itself from container list, or
-// its container responsible for it?
+// /**
+//  * Remove from pipeline.
+//  * @param {Object} downTask
+//  */
+// taskProto.unpipe = function (downTask) {
+//     clearDownTaskUpstreams(downTask, this);
+
+//     var downstreams = inner(this).downstreams;
+//     var downstreamIndex = indexOf(downstreams, downTask);
+//     if (downstreamIndex >= 0) {
+//         downstreams.splice(downstreamIndex, 1);
+//     }
+
+//     // Stop downstreams.
+//     downTask.reset();
+// };
+
 /**
- * Remove itself from the task pipeline.
+ * Remove all downstreams.
  */
-taskProto.remove = function () {
-    var fields = inner(this);
-    var thisTask = this;
-
-    each(fields.upstreams, function (upTask) {
-        var upTaskDownstreams = inner(upTask).downstreams;
-        for (var i = upTaskDownstreams.length - 1; i >= 0; i--) {
-            upTaskDownstreams[i] === thisTask && upTaskDownstreams.splice(i, 1);
-        }
-    });
-
-    fields.upstreams.length = 0;
+taskProto.clearDownstreams = function () {
+    var downstreams = inner(this).downstreams;
+    each(downstreams, clearTask);
+    downstreams.length = 0;
 };
+
+function clearTask(task) {
+    // Leave.
+    var upstreams = inner(task).upstreams;
+    each(upstreams, function (upTask) {
+        var upTaskDownstreams = inner(upTask).downstreams;
+        // That upTaskDownstreams contains task has been ensured.
+        upTaskDownstreams.splice(indexOf(upTaskDownstreams, task), 1);
+    });
+    upstreams.length = 0;
+    // Stop.
+    task.reset();
+}
