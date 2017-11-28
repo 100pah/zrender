@@ -386,16 +386,16 @@ function renderTaskReset() {
 }
 
 function renderTaskProgress(params, notify) {
-    var dueDataIndex = params.dueDataIndex;
-    var count = params.dueEnd - dueDataIndex;
+    var dueIndex = params.dueIndex;
+    var count = params.dueEnd - dueIndex;
     var outRoots = this.renderTask.outRoots;
     var i = 0;
     for (; i < count; i++) {
-        outRoots[i] = this._streamChildren[i + dueDataIndex];
+        outRoots[i] = this._streamChildren[i + dueIndex];
     }
     outRoots.length = i;
 
-    notify(i + dueDataIndex);
+    notify(i + dueIndex);
 }
 
 zrUtil.inherits(Group, Element);

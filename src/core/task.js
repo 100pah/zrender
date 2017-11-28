@@ -38,7 +38,7 @@ function Task(define) {
     fields.downstreams = [];
     fields.upstreams = [];
     fields.dueEnd = null;
-    fields.dueDataIndex = 0;
+    fields.dueIndex = 0;
     fields.list = define.list;
 
     this._progressCustom = define.progress;
@@ -59,7 +59,7 @@ taskProto.reset = function (params) {
     this._resetCustom && this._resetCustom(params);
 
     fields.dueEnd = fields.upstreams.length ? 0 : null;
-    fields.dueDataIndex = 0;
+    fields.dueIndex = 0;
 
     each(fields.downstreams, function (downTask) {
         downTask.reset(params);
@@ -79,23 +79,23 @@ taskProto.progress = function (params) {
 
     this._progressCustom({
         dueEnd: Math.min(
-            params.step != null ? fields.dueDataIndex + params.step : Infinity,
+            params.step != null ? fields.dueIndex + params.step : Infinity,
             fields.dueEnd != null ? fields.dueEnd : Infinity,
             fields.list.count()
         ),
-        dueDataIndex: fields.dueDataIndex
+        dueIndex: fields.dueIndex
     }, this._progressNotify);
 };
 
-function progressNotify(dueDataIndex, downstreamDueEnd) {
+function progressNotify(dueIndex, downstreamDueEnd) {
     var fields = inner(this);
 
-    assert(dueDataIndex != null);
+    assert(dueIndex != null);
 
-    fields.dueDataIndex = dueDataIndex;
+    fields.dueIndex = dueIndex;
 
     var downstreamPlan = {
-        dueEnd: downstreamDueEnd != null ? downstreamDueEnd : dueDataIndex
+        dueEnd: downstreamDueEnd != null ? downstreamDueEnd : dueIndex
     };
 
     each(fields.downstreams, function (downTask) {
@@ -118,7 +118,7 @@ taskProto.plan = function (params) {
 taskProto.unfinished = function () {
     var fields = inner(this);
 
-    return fields.dueDataIndex < (
+    return fields.dueIndex < (
         fields.dueEnd != null
             ? fields.dueEnd : fields.list.count()
     );
