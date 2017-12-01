@@ -1,12 +1,12 @@
 
-import {assert, each, bind, makeInner, indexOf} from './util';
+import {assert, each, bind, makeInner, indexOf, isArray} from './util';
 
 var inner = makeInner();
 
 /**
  * @param {Object} define
  * @param {Function} define.progress
- * @param {Object} define.list {count: Function}
+ * @param {Object|Array} define.input {count: Function} or a pure array.
  * @return See the return of `createTask`.
  */
 export function createTask(define) {
@@ -29,18 +29,22 @@ export function isTask(obj) {
  * @param {Object} define
  * @param {Function} define.progress Custom progress
  * @param {Function} define.reset Custom reset
- * @param {Function} define.list {count: Function}
+ * @param {Function} [define.input] {count: Function}
+ * @param {Function} [define.output] {count: Function}
  */
 function Task(define) {
     var fields = inner(this);
 
     fields.downstreams = [];
     fields.upstreams = [];
-    fields.list = define.list;
+    var input = fields.input = this.input = define.input;
+    // Just for programing convinience.
+    this.output = define.output || input;
 
     this._progressCustom = define.progress;
     this._resetCustom = define.reset;
     this._progressNotify = bind(progressNotify, this);
+    this._count = isArray(input) ? arrayCount : listCount;
 
     this.reset();
 }
@@ -80,7 +84,7 @@ taskProto.progress = function (params) {
         dueEnd: Math.min(
             params.step != null ? fields.dueIndex + params.step : Infinity,
             fields.dueEnd != null ? fields.dueEnd : Infinity,
-            fields.list.count()
+            this._count()
         ),
         dueIndex: fields.dueIndex
     }, this._progressNotify);
@@ -136,8 +140,7 @@ taskProto.unfinished = function () {
     var fields = inner(this);
 
     return fields.dueIndex < (
-        fields.dueEnd != null
-            ? fields.dueEnd : fields.list.count()
+        fields.dueEnd != null ? fields.dueEnd : this._count()
     );
 };
 
@@ -146,6 +149,8 @@ taskProto.unfinished = function () {
  * @return {Object} The downstream task.
  */
 taskProto.pipe = function (downTask) {
+    assert(!inner(downTask).disposed);
+
     var fields = inner(this);
 
     var downTaskUpstreams = inner(downTask).upstreams;
@@ -163,41 +168,40 @@ taskProto.pipe = function (downTask) {
     return downTask;
 };
 
-// /**
-//  * Remove from pipeline.
-//  * @param {Object} downTask
-//  */
-// taskProto.unpipe = function (downTask) {
-//     clearDownTaskUpstreams(downTask, this);
-
-//     var downstreams = inner(this).downstreams;
-//     var downstreamIndex = indexOf(downstreams, downTask);
-//     if (downstreamIndex >= 0) {
-//         downstreams.splice(downstreamIndex, 1);
-//     }
-
-//     // Stop downstreams.
-//     downTask.reset();
-// };
-
 /**
  * Remove all downstreams.
  */
 taskProto.clearDownstreams = function () {
     var downstreams = inner(this).downstreams;
-    each(downstreams, clearTask);
+    each(downstreams, function (downTask) {
+        // ??? Current forbiden reuse task to avoid troubles
+        // (piped by multiple task but difficult to unpipe).
+        downTask.dispose();
+        // var downTaskUpstream = inner(downTask).upstreams;
+        // downTaskUpstream.splice(indexOf(downTaskUpstream, this), 1);
+        // // Stop the down task, but do not leave it from all its upstreams,
+        // // because it may keep working with its other upstreams.
+        // downTask.reset();
+    }, this);
     downstreams.length = 0;
 };
 
-function clearTask(task) {
-    // Leave.
-    var upstreams = inner(task).upstreams;
-    each(upstreams, function (upTask) {
-        var upTaskDownstreams = inner(upTask).downstreams;
-        // That upTaskDownstreams contains task has been ensured.
-        upTaskDownstreams.splice(indexOf(upTaskDownstreams, task), 1);
-    });
-    upstreams.length = 0;
-    // Stop.
-    task.reset();
+taskProto.dispose = function () {
+    var fields = inner(this);
+    each(fields.upstreams, function (upTask) {
+        // var downTaskUpstream = inner(downTask).upstreams;
+        // downTaskUpstream.splice(indexOf(downTaskUpstream, this), 1);
+        var upTaskDownstream = inner(upTask).downstreams;
+        upTaskDownstream.splice(indexOf(upTaskDownstream, this), 1);
+    }, this);
+    this.reset();
+    fields.disposed = true;
+};
+
+function listCount() {
+    return inner(this).input.count();
+}
+
+function arrayCount() {
+    return inner(this).input.length;
 }

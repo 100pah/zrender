@@ -115,7 +115,7 @@ Group.prototype = {
      * @return {number}
      */
     childCount: function () {
-        return (this.renderTask
+        return (this.streamAgent
             ? this._streamChildren
             : this._children
         ).length;
@@ -128,7 +128,7 @@ Group.prototype = {
     add: function (child) {
         if (child && child !== this && child.parent !== this) {
 
-            if (this.renderTask) {
+            if (this.streamAgent) {
                 this._streamChildren.push(child);
             }
             else {
@@ -238,8 +238,8 @@ Group.prototype = {
         // have not remove streamChildren from storage yet.
         // performance?
         if (this.renderTask) {
-            this.renderTask.reset();
-            this._streamChildren.length = 0;
+            this.renderTask.dispose();
+            this.renderTask = null;
         }
 
         return this;
@@ -347,22 +347,23 @@ Group.prototype = {
      * If called duplicately, nothing will happen.
      */
     enableStream: function (disable) {
-        var renderTask = this.renderTask;
+        if (this.renderTask) {
+            this.renderTask.dispose();
+            this.renderTask = null;
+        }
 
         if (disable) {
-            renderTask && renderTask.remove();
-            this.streamAgent = this.renderTask = null;
+            this.streamAgent = null;
             return;
         }
 
-        if (!renderTask) {
-            this.renderTask = createTask({
-                list: this,
-                reset: zrUtil.bind(renderTaskReset, this),
-                progress: zrUtil.bind(renderTaskProgress, this)
-            });
-            this.renderTask.outRoots = [];
-        }
+        this.renderTask = createTask({
+            input: this,
+            reset: zrUtil.bind(renderTaskReset, this),
+            progress: zrUtil.bind(renderTaskProgress, this)
+        });
+        this.renderTask.outRoots = [];
+
         if (!this.streamAgent) {
             this.streamAgent = new Path();
             this.streamAgent.streamContainer = this;
@@ -373,7 +374,7 @@ Group.prototype = {
     },
 
     count: function () {
-        return this.renderTask
+        return this.streamAgent
             ? this._streamChildren.length
             : this._children.length;
     }
