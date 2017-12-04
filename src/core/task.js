@@ -38,7 +38,7 @@ function Task(define) {
     fields.downstreams = [];
     fields.upstreams = [];
     var input = fields.input = this.input = define.input;
-    // Just for programing convinience.
+    // Just for programing convenience.
     this.output = define.output || input;
 
     this._progressCustom = define.progress;
@@ -59,14 +59,28 @@ taskProto.reset = function (params) {
 
     fields.started = false;
     fields.dueEnd = fields.upstreams.length ? 0 : null;
-    fields.dueIndex = 0;
-    fields.outputDueEnd = 0;
+    fields.dueIndex = fields.outputDueEnd = 0;
 
     this._resetCustom && this._resetCustom(params);
 
     each(fields.downstreams, function (downTask) {
         downTask.reset(params);
     });
+};
+
+/**
+ * @param {Array|Object} input
+ */
+taskProto.changeInput = function (input) {
+    var fields = inner(this);
+
+    // ???
+    assert(!fields.upstreams.length);
+
+    fields.input = this.input = input;
+    fields.dueIndex = 0;
+    // Keep outputDueEnd, should not rollback.
+    fields.dueEnd = null;
 };
 
 /**
@@ -99,7 +113,12 @@ function progressNotify(dueIndex, outputDueEnd) {
 
     // If no `outputDueEnd`, assume that output data and
     // input data is the same, so use `dueIndex` as `outputDueEnd`.
-    fields.outputDueEnd = outputDueEnd != null ? outputDueEnd : dueIndex;
+    outputDueEnd = outputDueEnd != null ? outputDueEnd : dueIndex;
+
+    // ??? Can not rollback.
+    assert(outputDueEnd >= fields.outputDueEnd);
+
+    fields.outputDueEnd = outputDueEnd;
 
     each(fields.downstreams, function (downTask) {
         downTask.plan();
@@ -149,6 +168,7 @@ taskProto.unfinished = function () {
  * @return {Object} The downstream task.
  */
 taskProto.pipe = function (downTask) {
+    // ???
     assert(!inner(downTask).disposed);
 
     var fields = inner(this);
